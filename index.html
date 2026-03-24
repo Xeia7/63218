@@ -3,8 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Transcripteur d'Archives Françaises</title>
-    
+    <title>Archive Digitizer Pro</title>
     <script src="https://cdn.sheetjs.com/xlsx-latest/package/dist/xlsx.full.min.js"></script>
     <script type="importmap">
       {
@@ -13,127 +12,100 @@
         }
       }
     </script>
-
     <style>
-        body { font-family: 'Segoe UI', sans-serif; background-color: #f4f7f6; display: flex; justify-content: center; padding: 40px; }
-        .container { background: white; padding: 30px; border-radius: 12px; box-shadow: 0 10px 25px rgba(0,0,0,0.1); width: 100%; max-width: 550px; }
-        h2 { color: #2c3e50; border-bottom: 2px solid #eee; padding-bottom: 10px; }
-        label { display: block; margin: 15px 0 5px; font-weight: 600; color: #34495e; }
+        body { font-family: 'Segoe UI', sans-serif; background: #f0f2f5; display: flex; justify-content: center; padding: 40px; }
+        .box { background: white; padding: 30px; border-radius: 12px; box-shadow: 0 4px 15px rgba(0,0,0,0.1); width: 100%; max-width: 500px; }
+        h2 { color: #1a73e8; margin-bottom: 20px; }
+        label { display: block; margin: 15px 0 5px; font-weight: bold; }
         input { width: 100%; padding: 12px; border: 1px solid #ddd; border-radius: 6px; box-sizing: border-box; }
-        button { width: 100%; padding: 15px; background: #3498db; color: white; border: none; border-radius: 6px; font-size: 16px; font-weight: bold; cursor: pointer; margin-top: 20px; transition: 0.3s; }
-        button:hover { background: #2980b9; }
-        button:disabled { background: #bdc3c7; cursor: not-allowed; }
-        #status { margin-top: 20px; padding: 15px; border-radius: 6px; font-size: 14px; display: none; }
-        .loading { display: block !important; background: #e1f5fe; color: #0288d1; border: 1px solid #b3e5fc; }
-        .error { display: block !important; background: #ffebee; color: #c62828; border: 1px solid #ffcdd2; }
-        .success { display: block !important; background: #e8f5e9; color: #2e7d32; border: 1px solid #c8e6c9; }
+        button { width: 100%; padding: 15px; background: #1a73e8; color: white; border: none; border-radius: 6px; font-size: 16px; cursor: pointer; margin-top: 20px; }
+        button:disabled { background: #ccc; }
+        #status { margin-top: 20px; padding: 15px; border-radius: 6px; display: none; font-size: 14px; }
+        .info { display: block !important; background: #e8f0fe; color: #1967d2; }
+        .error { display: block !important; background: #fce8e6; color: #c5221f; }
     </style>
 </head>
 <body>
 
-<div class="container">
+<div class="box">
     <h2>Transcripteur d'Archives</h2>
-    <p>Upload your French census images to extract Columns 1-15 to Excel.</p>
-    
     <label>1. Gemini API Key</label>
-    <input type="password" id="apiKey" placeholder="Paste your AI Studio Key here...">
+    <input type="password" id="apiKey" placeholder="Paste key here...">
 
-    <label>2. Select Archive Images</label>
+    <label>2. Select Images</label>
     <input type="file" id="imageInput" accept="image/*" multiple>
 
-    <button id="runBtn">Capture Data & Download Excel</button>
-    
+    <button id="btn">Capture Data & Export Excel</button>
     <div id="status"></div>
 </div>
 
 <script type="module">
     import { GoogleGenAI } from "@google/genai";
 
-    const runBtn = document.getElementById('runBtn');
-    const statusDiv = document.getElementById('status');
+    const btn = document.getElementById('btn');
+    const status = document.getElementById('status');
 
-    runBtn.addEventListener('click', async () => {
+    btn.addEventListener('click', async () => {
         const key = document.getElementById('apiKey').value;
         const files = document.getElementById('imageInput').files;
 
-        if (!key) {
-            showStatus("Please enter your API Key.", "error");
-            return;
-        }
-        if (files.length === 0) {
-            showStatus("Please select at least one image.", "error");
+        if (!key || files.length === 0) {
+            status.innerText = "Error: Key and Image required.";
+            status.className = "error";
             return;
         }
 
-        showStatus("AI is reading the records... this may take a moment.", "loading");
-        runBtn.disabled = true;
-
-        let masterData = [];
+        status.innerText = "Processing... the AI is reading the archive.";
+        status.className = "info";
+        btn.disabled = true;
 
         try {
+            // FIX: Initializing with the key correctly for browser usage
             const genAI = new GoogleGenAI(key);
             const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
 
-            for (const file of files) {
-                const base64 = await toBase64(file);
-                const pureBase64 = base64.split(',')[1];
+            let finalData = [];
 
-                const prompt = `
-                    Analyze this French census image and extract all handwritten rows.
-                    Capture columns 1 through 15 exactly as they appear in the grid.
-                    
-                    RULES:
-                    1. If a cell contains ditto marks (") or 'do', you MUST repeat the actual text from the row above in your output.
-                    2. Use these column names: Filename, Col 1, Col 2, Surname (Col 3), Given Names (Col 4), Birth Year (Col 5), Birthplace (Col 6), Relationship (Col 11).
-                    3. Return ONLY a JSON array. No conversational text.
-                    4. Current Filename: ${file.name}
-                `;
+            for (const file of files) {
+                const blob = await fileToBtn(file);
+                const base64Data = blob.split(',')[1];
+
+                const prompt = `Extract handwriting from this French record. 
+                Focus on Column 3 (Nom), 4 (Prénoms), 5 (Age), 6 (Lieu), 11 (Situation).
+                If you see ditto marks (") or 'do', repeat the name from the row above.
+                Format as a JSON array of objects. Use Filename: ${file.name}`;
 
                 const result = await model.generateContent([
                     prompt,
-                    { inlineData: { data: pureBase64, mimeType: file.type } }
+                    { inlineData: { data: base64Data, mimeType: file.type } }
                 ]);
 
-                const response = await result.response;
-                const text = response.text();
-                const cleanJson = text.replace(/```json|```/g, "").trim();
-                const parsed = JSON.parse(cleanJson);
-                
-                masterData = masterData.concat(parsed);
+                const textOutput = result.response.text();
+                const jsonOnly = textOutput.replace(/```json|```/g, "").trim();
+                finalData = finalData.concat(JSON.parse(jsonOnly));
             }
 
-            exportExcel(masterData);
-            showStatus("Success! Your Excel file has been downloaded.", "success");
+            const ws = XLSX.utils.json_to_sheet(finalData);
+            const wb = XLSX.utils.book_new();
+            XLSX.utils.book_append_sheet(wb, ws, "Data");
+            XLSX.writeFile(wb, "Archive_Capture.xlsx");
 
-        } catch (err) {
-            console.error(err);
-            showStatus("Error: " + err.message, "error");
+            status.innerText = "Success! Excel downloaded.";
+        } catch (e) {
+            status.innerText = "Error: " + e.message;
+            status.className = "error";
         } finally {
-            runBtn.disabled = false;
+            btn.disabled = false;
         }
     });
 
-    function showStatus(msg, type) {
-        statusDiv.innerText = msg;
-        statusDiv.className = type;
-    }
-
-    function toBase64(file) {
-        return new Promise((res, rej) => {
-            const reader = new FileReader();
-            reader.readAsDataURL(file);
-            reader.onload = () => res(reader.result);
-            reader.onerror = e => rej(e);
+    function fileToBtn(file) {
+        return new Promise((res) => {
+            const r = new FileReader();
+            r.onload = () => res(r.result);
+            r.readAsDataURL(file);
         });
     }
-
-    function exportExcel(data) {
-        const ws = XLSX.utils.json_to_sheet(data);
-        const wb = XLSX.utils.book_new();
-        XLSX.utils.book_append_sheet(wb, ws, "Transcription");
-        XLSX.writeFile(wb, "Archive_Capture_Results.xlsx");
-    }
 </script>
-
 </body>
 </html>
