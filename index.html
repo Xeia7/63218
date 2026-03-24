@@ -1,0 +1,134 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Archive Digitizer - Col 1-N</title>
+    
+    <script src="https://cdn.sheetjs.com/xlsx-latest/package/dist/xlsx.full.min.js"></script>
+    <script type="importmap">
+      {
+        "imports": {
+          "@google/genai": "https://esm.run/@google/genai"
+        }
+      }
+    </script>
+
+    <style>
+        body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background-color: #f0f2f5; margin: 0; padding: 20px; display: flex; justify-content: center; }
+        .card { background: white; padding: 30px; border-radius: 12px; box-shadow: 0 4px 20px rgba(0,0,0,0.08); width: 100%; max-width: 600px; }
+        h2 { color: #1a73e8; margin-top: 0; }
+        label { display: block; margin-bottom: 5px; font-weight: bold; color: #444; }
+        input[type="text"], input[type="file"] { width: 100%; padding: 12px; margin-bottom: 20px; border: 1px solid #ddd; border-radius: 6px; box-sizing: border-box; }
+        button { width: 100%; padding: 15px; background-color: #1a73e8; color: white; border: none; border-radius: 6px; font-size: 16px; cursor: pointer; transition: background 0.3s; }
+        button:hover { background-color: #1557b0; }
+        button:disabled { background-color: #ccc; cursor: not-allowed; }
+        #status { margin-top: 20px; padding: 15px; border-radius: 6px; display: none; }
+        .loading { background-color: #e8f0fe; color: #1967d2; display: block !important; }
+        .error { background-color: #fce8e6; color: #c5221f; display: block !important; }
+    </style>
+</head>
+<body>
+
+<div class="card">
+    <h2>Transcripteur d'Archives</h2>
+    <p>Upload your image to extract all columns (1-15) directly to Excel.</p>
+    
+    <label for="apiKey">1. Gemini API Key</label>
+    <input type="text" id="apiKey" placeholder="Paste your AI Studio Key here...">
+
+    <label for="imageInput">2. Select Image(s)</label>
+    <input type="file" id="imageInput" accept="image/*" multiple>
+
+    <button id="processBtn">Capture Data & Export Excel</button>
+    
+    <div id="status"></div>
+</div>
+
+<script type="module">
+    import { GoogleGenAI } from "@google/genai";
+
+    const processBtn = document.getElementById('processBtn');
+    const statusDiv = document.getElementById('status');
+
+    processBtn.addEventListener('click', async () => {
+        const key = document.getElementById('apiKey').value;
+        const files = document.getElementById('imageInput').files;
+
+        if (!key) return alert("Please enter your API Key.");
+        if (files.length === 0) return alert("Please select at least one image.");
+
+        statusDiv.className = "loading";
+        statusDiv.innerText = "AI is reading the handwriting... Please wait.";
+        processBtn.disabled = true;
+
+        let allRows = [];
+
+        try {
+            const genAI = new GoogleGenAI(key);
+            const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
+
+            for (const file of files) {
+                const base64Data = await fileToBase64(file);
+                const imageData = base64Data.split(',')[1];
+
+                const prompt = `
+                    You are an expert French genealogist. Extract data from this census image.
+                    Capture exactly what is shown in the columns.
+                    
+                    Return a JSON array of objects with these keys for EVERY person:
+                    "Filename": "${file.name}",
+                    "Col 1": "House/Ref #",
+                    "Col 2": "Person #",
+                    "Col 3 (Nom)": "Surname",
+                    "Col 4 (Prénoms)": "Given Names",
+                    "Col 5": "Age/Birth Year",
+                    "Col 6": "Birthplace",
+                    "Col 11 (Situation)": "Relationship (Chef, Épouse, etc.)"
+                    
+                    RULES:
+                    1. If a column has a ditto mark (") or 'do', copy the value from the row above.
+                    2. Maintain the order 1 to N as shown in the visual grid.
+                    3. Return ONLY the JSON array.
+                `;
+
+                const result = await model.generateContent([
+                    prompt,
+                    { inlineData: { data: imageData, mimeType: file.type } }
+                ]);
+
+                const responseText = await result.response.text();
+                const cleanJson = responseText.replace(/```json|```/g, "").trim();
+                allRows = allRows.concat(JSON.parse(cleanJson));
+            }
+
+            exportToExcel(allRows);
+            statusDiv.innerText = "Success! Excel downloaded.";
+            statusDiv.className = "";
+        } catch (error) {
+            statusDiv.className = "error";
+            statusDiv.innerText = "Error: " + error.message;
+        } finally {
+            processBtn.disabled = false;
+        }
+    });
+
+    function fileToBase64(file) {
+        return new Promise((resolve, reject) => {
+            const reader = new FileReader();
+            reader.readAsDataURL(file);
+            reader.onload = () => resolve(reader.result);
+            reader.onerror = error => reject(error);
+        });
+    }
+
+    function exportToExcel(data) {
+        const worksheet = XLSX.utils.json_to_sheet(data);
+        const workbook = XLSX.utils.book_new();
+        XLSX.utils.book_append_sheet(workbook, worksheet, "Transcription");
+        XLSX.writeFile(workbook, "Archive_Export.xlsx");
+    }
+</script>
+
+</body>
+</html>
